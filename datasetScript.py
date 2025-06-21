@@ -1,69 +1,112 @@
-# === OPTIONAL: SETUP VIRTUAL ENVIRONMENT (run once) ===
-# To run this block manually in the terminal:
-# py -m venv venv
-# source venv/bin/activate       # On macOS/Linux
-# .\venv\Scripts\activate        # On Windows
-# pip install --upgrade pip
-# pip install duckduckgo-search pillow tqdm
-
-# === ACTUAL SCRIPT STARTS HERE ===
+# ==============================================================
+# Reddit Image Dataset Scraper using Official Reddit API (PRAW)
+#
+# Setup Instructions:
+# --------------------------------------------------------------
+# 1. Create a Reddit app:
+#    - Go to: https://www.reddit.com/prefs/apps
+#    - Click "Create App"
+#    - App type: script
+#    - Redirect URI: http://localhost:8080
+#    - Save the app to get your `client_id` and `client_secret`
+#
+# 2. Create a `config.ini` file in the same directory with this content:
+#
+# [REDDIT]
+# client_id = your_client_id_here
+# client_secret = your_client_secret_here
+# username = your_reddit_username
+# password = your_reddit_password
+#
+# 3. Install dependencies:
+# pip install praw tqdm requests
+#
+# 4. Run the script:
+# python reddit_scraper.py
+#
+# Output: gallery_dataset/<category>/<subreddit>_<index>.jpg
+# ==============================================================
 
 import os
 import requests
-from PIL import Image
-from io import BytesIO
+import configparser
 from tqdm import tqdm
-from duckduckgo_search import DDGImages
+import praw
 
-# === CONFIG ===
+# === Load credentials from config.ini ===
+config = configparser.ConfigParser()
+config.read("config.ini")
+
+REDDIT_CLIENT_ID = config["REDDIT"]["client_id"]
+REDDIT_CLIENT_SECRET = config["REDDIT"]["client_secret"]
+REDDIT_USERNAME = config["REDDIT"]["username"]
+REDDIT_PASSWORD = config["REDDIT"]["password"]
+USER_AGENT = f"ImageDatasetScript/0.1 by {REDDIT_USERNAME}"
+
+# === PRAW client ===
+reddit = praw.Reddit(
+    client_id=REDDIT_CLIENT_ID,
+    client_secret=REDDIT_CLIENT_SECRET,
+    username=REDDIT_USERNAME,
+    password=REDDIT_PASSWORD,
+    user_agent=USER_AGENT,
+)
+
+# === Categories config with optional NSFW filtering ===
 CATEGORIES = {
-    "screenshots": ["phone screenshot", "app UI screenshot", "chat screenshot"],
-    "memes": ["funny meme", "relatable meme", "reaction meme"],
-    "people": ["portrait photography", "smiling person", "friends group photo"],
-    "food": ["delicious food", "gourmet meal", "street food"],
-    "places": ["beautiful landscape", "city skyline", "travel destination"],
-    "animals": ["cute puppy", "wildlife", "funny cat"]
+    "screenshots": {"subreddit": "screenshots", "allow_nsfw": True},
+    "memes": {"subreddit": "memes", "allow_nsfw": True},
+    "people": {"subreddit": "Portraits", "allow_nsfw": False},  # NSFW filtered
+    "food": {"subreddit": "foodporn", "allow_nsfw": True},
+    "places": {"subreddit": "EarthPorn", "allow_nsfw": True},
+    "animals": {"subreddit": "aww", "allow_nsfw": True},
 }
-OUTPUT_DIR = "gallery_dataset"
-IMAGES_PER_CATEGORY = 500
-IMAGES_PER_QUERY = 100  # number per subquery
 
-# === HELPER FUNCTIONS ===
-def sanitize_filename(name):
-    return "".join(c if c.isalnum() else "_" for c in name)
+LIMIT = 500
+OUTPUT_DIR = "gallery_dataset"
+HEADERS = {"User-Agent": USER_AGENT}
 
 def download_image(url, path):
     try:
-        response = requests.get(url, timeout=5)
-        image = Image.open(BytesIO(response.content)).convert("RGB")
-        image.save(path)
-        return True
-    except Exception:
-        return False
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        if "image" in resp.headers.get("Content-Type", ""):
+            with open(path, "wb") as f:
+                f.write(resp.content)
+            return True
+    except:
+        pass
+    return False
 
-def fetch_images(query, category_dir, start_index=0, max_images=100):
-    search = DDGImages()
-    results = search.search(query, max_results=max_images)
-    downloaded = 0
+def scrape_subreddit(subreddit_name, category_folder, allow_nsfw, limit):
+    os.makedirs(category_folder, exist_ok=True)
+    print(f"\nDownloading from r/{subreddit_name} (NSFW allowed: {allow_nsfw})")
 
-    for result in tqdm(results, desc=f"  ↳ {query[:30]}...", leave=False):
-        url = result.image
-        filename = os.path.join(category_dir, sanitize_filename(query + "_" + str(downloaded)) + ".jpg")
+    subreddit = reddit.subreddit(subreddit_name)
+    count = 0
+
+    for post in subreddit.top(limit=limit):
+        if post.over_18 and not allow_nsfw:
+            continue  # Skip NSFW posts if not allowed
+
+        url = post.url
+        ext = os.path.splitext(url)[1].lower()
+        if ext not in [".jpg", ".jpeg", ".png"]:
+            continue
+
+        filename = os.path.join(category_folder, f"{subreddit_name}_{count}{ext}")
         if download_image(url, filename):
-            downloaded += 1
-        if downloaded >= max_images:
+            count += 1
+            tqdm.write(f"✔ Saved {filename}")
+        if count >= limit:
             break
 
-# === MAIN ===
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    for category, queries in CATEGORIES.items():
-        print(f"\nCategory: {category}")
-        category_dir = os.path.join(OUTPUT_DIR, category)
-        os.makedirs(category_dir, exist_ok=True)
-        total_per_query = IMAGES_PER_CATEGORY // len(queries)
-        for query in queries:
-            fetch_images(query, category_dir, max_images=total_per_query)
+    for category, config in CATEGORIES.items():
+        subreddit_name = config["subreddit"]
+        allow_nsfw = config["allow_nsfw"]
+        category_folder = os.path.join(OUTPUT_DIR, category)
+        scrape_subreddit(subreddit_name, category_folder, allow_nsfw, LIMIT)
 
 if __name__ == "__main__":
     main()
