@@ -21,6 +21,7 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from tkinter import Tk, filedialog, Label, Button, Canvas
 from PIL import Image, ImageTk
+import urllib.request
 
 # --- CONFIG ---
 DATA_DIR = "gallery_dataset"
@@ -30,6 +31,8 @@ IMG_SIZE = 224
 EPOCHS = 10
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CLASS_NAMES = ['animals', 'food', 'memes', 'people', 'places', 'screenshots']
+MODEL_PATH = "gallery_model.pth"
+MODEL_URL = "https://github.com/J-Moro/declutterly/releases/download/v1.0/gallery_model.pth"
 
 # --- TRANSFORMS ---
 data_transforms = {
@@ -128,11 +131,20 @@ def open_image():
     label_result.config(text=f"Prediction: {pred_class}\nConfidence: {confidence:.2f}")
 
 # --- LOAD TRAINED MODEL ---
-if os.path.exists("gallery_model.pth"):
-    model.load_state_dict(torch.load("gallery_model.pth", map_location=DEVICE))
+
+if not os.path.exists(MODEL_PATH):
+    print("⚠️ Model not found locally. Attempting to download from GitHub...")
+    try:
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+        print("✅ Downloaded model from GitHub.")
+    except Exception as e:
+        print(f"❌ Failed to download model: {e}")
+        print("Please train the model manually by uncommenting train_model() and running the script.")
+        MODEL_PATH = None
+
+if MODEL_PATH and os.path.exists(MODEL_PATH):
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
     print("✅ Loaded saved model.")
-else:
-    print("⚠️ No saved model found. Train it first by uncommenting train_model().")
 
 # --- LAUNCH UI ---
 root = Tk()
