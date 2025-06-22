@@ -19,7 +19,7 @@
 # password = your_reddit_password
 #
 # 3. Install dependencies:
-# pip install praw tqdm requests
+# pip install praw tqdm requests pandas
 #
 # 4. Run the script:
 # python reddit_scraper.py
@@ -30,8 +30,12 @@
 import os
 import requests
 import configparser
+import pandas as pd
 from tqdm import tqdm
 import praw
+import shutil
+import random
+import time
 
 # === Load credentials from config.ini ===
 config = configparser.ConfigParser()
@@ -41,9 +45,9 @@ REDDIT_CLIENT_ID = config["REDDIT"]["client_id"]
 REDDIT_CLIENT_SECRET = config["REDDIT"]["client_secret"]
 REDDIT_USERNAME = config["REDDIT"]["username"]
 REDDIT_PASSWORD = config["REDDIT"]["password"]
-USER_AGENT = f"ImageDatasetScript/0.1 by {REDDIT_USERNAME}"
+USER_AGENT = f"ImageDatasetScript/0.2 by {REDDIT_USERNAME}"
 
-# === PRAW client ===
+# === Reddit client ===
 reddit = praw.Reddit(
     client_id=REDDIT_CLIENT_ID,
     client_secret=REDDIT_CLIENT_SECRET,
@@ -52,19 +56,41 @@ reddit = praw.Reddit(
     user_agent=USER_AGENT,
 )
 
-# === Categories config with optional NSFW filtering ===
+# === Categories and subreddits ===
 CATEGORIES = {
-    "screenshots": {"subreddit": "screenshots", "allow_nsfw": True},
-    "memes": {"subreddit": "memes", "allow_nsfw": True},
-    "people": {"subreddit": "Portraits", "allow_nsfw": False},  # NSFW filtered
-    "food": {"subreddit": "foodporn", "allow_nsfw": True},
-    "places": {"subreddit": "EarthPorn", "allow_nsfw": True},
-    "animals": {"subreddit": "aww", "allow_nsfw": True},
+    "screenshots": {
+        "subreddits": ["screenshots", "softwaregore", "techsupportgore"],
+        "allow_nsfw": True
+    },
+    "memes": {
+        "subreddits": ["memes", "dankmemes", "wholesomememes", "me_irl"],
+        "allow_nsfw": True
+    },
+    "people": {
+        "subreddits": ["Portraits", "selfie", "OldSchoolCool"],
+        "allow_nsfw": False  # Filter NSFW
+    },
+    "food": {
+        "subreddits": ["foodporn", "food", "BudgetFood"],
+        "allow_nsfw": True
+    },
+    "places": {
+        "subreddits": ["EarthPorn", "cityporn", "travel"],
+        "allow_nsfw": True
+    },
+    "animals": {
+        "subreddits": ["aww", "cats", "dogs"],
+        "allow_nsfw": True
+    }
 }
 
-LIMIT = 500
+LIMIT = 1000  # Total images per category
 OUTPUT_DIR = "gallery_dataset"
 HEADERS = {"User-Agent": USER_AGENT}
+
+# === Initialize metadata container ===
+all_metadata = []
+
 
 def download_image(url, path):
     try:
@@ -77,36 +103,102 @@ def download_image(url, path):
         pass
     return False
 
-def scrape_subreddit(subreddit_name, category_folder, allow_nsfw, limit):
-    os.makedirs(category_folder, exist_ok=True)
-    print(f"\nDownloading from r/{subreddit_name} (NSFW allowed: {allow_nsfw})")
 
-    subreddit = reddit.subreddit(subreddit_name)
-    count = 0
+def scrape_subreddits(category, config, target_total):
+    os.makedirs(os.path.join(OUTPUT_DIR, category), exist_ok=True)
+    total_count = 0
+    subreddits = config["subreddits"]
+    allow_nsfw = config["allow_nsfw"]
+    per_sub_limit = target_total // len(subreddits)
 
-    for post in subreddit.top(limit=limit):
-        if post.over_18 and not allow_nsfw:
-            continue  # Skip NSFW posts if not allowed
+    for sub in subreddits:
+        print(f"\nCategory: {category} — Subreddit: r/{sub}")
+        count = 0
+        subreddit = reddit.subreddit(sub)
 
-        url = post.url
-        ext = os.path.splitext(url)[1].lower()
-        if ext not in [".jpg", ".jpeg", ".png"]:
-            continue
+        for post in subreddit.top(limit=per_sub_limit * 2):  # overfetch
+            if post.over_18 and not allow_nsfw:
+                continue
 
-        filename = os.path.join(category_folder, f"{subreddit_name}_{count}{ext}")
-        if download_image(url, filename):
-            count += 1
-            tqdm.write(f"✔ Saved {filename}")
-        if count >= limit:
+            ext = os.path.splitext(post.url)[1].lower()
+            if ext not in [".jpg", ".jpeg", ".png"]:
+                continue
+
+            filename = f"{sub}_{count}{ext}"
+            filepath = os.path.join(OUTPUT_DIR, category, filename)
+
+            if download_image(post.url, filepath):
+                all_metadata.append({
+                    "filename": filename,
+                    "category": category,
+                    "subreddit": sub,
+                    "title": post.title,
+                    "author": str(post.author),
+                    "upvotes": post.score,
+                    "url": post.url
+                })
+                count += 1
+                total_count += 1
+                tqdm.write(f"✔ {filepath}")
+
+            if count >= per_sub_limit or total_count >= target_total:
+                break
+
+        if total_count >= target_total:
             break
+
+    print(f"Finished {category}: {total_count} images\n")
+
+
+def split_dataset(base_dir="gallery_dataset", splits=(0.7, 0.15, 0.15), seed=None):
+    assert sum(splits) == 1.0, "Splits must sum to 1.0"
+    if seed is None:
+        seed = int(time.time()) % 100000  # generates a pseudo-random seed
+        print(f"[INFO] Using dynamic seed: {seed}")
+    random.seed(seed)
+
+    categories = [c for c in os.listdir(base_dir)
+                  if os.path.isdir(os.path.join(base_dir, c)) and c not in {"train", "val", "test"}]
+
+    for split_name in ["train", "val", "test"]:
+        split_path = os.path.join(base_dir, split_name)
+        os.makedirs(split_path, exist_ok=True)
+
+    for category in categories:
+        src_dir = os.path.join(base_dir, category)
+        images = [f for f in os.listdir(src_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        random.shuffle(images)
+
+        n = len(images)
+        n_train = int(n * splits[0])
+        n_val = int(n * splits[1])
+
+        split_map = {
+            "train": images[:n_train],
+            "val": images[n_train:n_train + n_val],
+            "test": images[n_train + n_val:]
+        }
+
+        for split_name, files in split_map.items():
+            dst_dir = os.path.join(base_dir, split_name, category)
+            os.makedirs(dst_dir, exist_ok=True)
+            for file in files:
+                shutil.copy2(os.path.join(src_dir, file), os.path.join(dst_dir, file))
+
+    print("Dataset successfully split into train/val/test folders.")
 
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+
     for category, config in CATEGORIES.items():
-        subreddit_name = config["subreddit"]
-        allow_nsfw = config["allow_nsfw"]
-        category_folder = os.path.join(OUTPUT_DIR, category)
-        scrape_subreddit(subreddit_name, category_folder, allow_nsfw, LIMIT)
+        scrape_subreddits(category, config, LIMIT)
+
+    # Save all metadata to a single CSV file
+    df = pd.DataFrame(all_metadata)
+    df.to_csv(os.path.join(OUTPUT_DIR, "metadata.csv"), index=False)
+    print(f"Saved metadata for all categories: {len(df)} images")
+
 
 if __name__ == "__main__":
     main()
+    split_dataset()
