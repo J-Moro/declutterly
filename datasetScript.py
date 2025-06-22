@@ -36,6 +36,7 @@ import praw
 import shutil
 import random
 import time
+import uuid
 
 # === Load credentials from config.ini ===
 config = configparser.ConfigParser()
@@ -59,7 +60,7 @@ reddit = praw.Reddit(
 # === Categories and subreddits ===
 CATEGORIES = {
     "screenshots": {
-        "subreddits": ["screenshots", "softwaregore", "techsupportgore"],
+        "subreddits": ["screenshots", "softwaregore", "texts"],
         "allow_nsfw": True
     },
     "memes": {
@@ -149,11 +150,10 @@ def scrape_subreddits(category, config, target_total):
 
     print(f"Finished {category}: {total_count} images\n")
 
-
 def split_dataset(base_dir="gallery_dataset", splits=(0.7, 0.15, 0.15), seed=None):
     assert sum(splits) == 1.0, "Splits must sum to 1.0"
     if seed is None:
-        seed = int(time.time()) % 100000  # generates a pseudo-random seed
+        seed = int(time.time()) % 100000
         print(f"[INFO] Using dynamic seed: {seed}")
     random.seed(seed)
 
@@ -161,8 +161,7 @@ def split_dataset(base_dir="gallery_dataset", splits=(0.7, 0.15, 0.15), seed=Non
                   if os.path.isdir(os.path.join(base_dir, c)) and c not in {"train", "val", "test"}]
 
     for split_name in ["train", "val", "test"]:
-        split_path = os.path.join(base_dir, split_name)
-        os.makedirs(split_path, exist_ok=True)
+        os.makedirs(os.path.join(base_dir, split_name), exist_ok=True)
 
     for category in categories:
         src_dir = os.path.join(base_dir, category)
@@ -180,12 +179,29 @@ def split_dataset(base_dir="gallery_dataset", splits=(0.7, 0.15, 0.15), seed=Non
         }
 
         for split_name, files in split_map.items():
-            dst_dir = os.path.join(base_dir, split_name, category)
-            os.makedirs(dst_dir, exist_ok=True)
-            for file in files:
-                shutil.copy2(os.path.join(src_dir, file), os.path.join(dst_dir, file))
+            if split_name == "test":
+                dst_dir = os.path.join(base_dir, "test")
+            else:
+                dst_dir = os.path.join(base_dir, split_name, category)
 
-    print("Dataset successfully split into train/val/test folders.")
+            os.makedirs(dst_dir, exist_ok=True)
+
+            for file in files:
+                src_path = os.path.join(src_dir, file)
+                ext = os.path.splitext(file)[1].lower()
+
+                if split_name == "test":
+                    # Generate a UUID-based name with the same file extension
+                    new_name = f"{uuid.uuid4().hex}{ext}"
+                    dst_path = os.path.join(dst_dir, new_name)
+                else:
+                    dst_path = os.path.join(dst_dir, file)
+
+                shutil.copy2(src_path, dst_path)
+
+    print("✅ Dataset split complete.")
+    print("✅ Test images are flattened and randomly renamed.")
+
 
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)

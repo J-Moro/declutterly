@@ -114,21 +114,8 @@ def predict_image(image_path):
         _, predicted = torch.max(outputs, 1)
         probs = torch.nn.functional.softmax(outputs[0], dim=0)
 
-    return CLASS_NAMES[predicted.item()], probs[predicted.item()].item()
+    return CLASS_NAMES[predicted.item()], probs[predicted.item()].item(), img
 
-# --- UI ---
-def open_image():
-    file_path = filedialog.askopenfilename()
-    if not file_path:
-        return
-    img = Image.open(file_path).resize((224, 224))
-    tk_image = ImageTk.PhotoImage(img)
-    canvas.create_image(112, 112, image=tk_image, anchor='center')
-    canvas.image = tk_image
-    label_result.config(text="Predicting...")
-    label_result.update_idletasks()
-    pred_class, confidence = predict_image(file_path)
-    label_result.config(text=f"Prediction: {pred_class}\nConfidence: {confidence:.2f}")
 
 # --- LOAD TRAINED MODEL ---
 
@@ -146,15 +133,4 @@ if MODEL_PATH and os.path.exists(MODEL_PATH):
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
     print("✅ Loaded saved model.")
 
-# --- LAUNCH UI ---
-root = Tk()
-root.title("PyTorch Gallery Classifier")
 
-Label(root, text="Choose an image to classify:", font=("Arial", 14)).pack(pady=10)
-canvas = Canvas(root, width=224, height=224)
-canvas.pack()
-Button(root, text="Choose Image", command=open_image).pack(pady=10)
-label_result = Label(root, text="", font=("Arial", 12))
-label_result.pack()
-
-root.mainloop()
