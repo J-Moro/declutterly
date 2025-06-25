@@ -22,7 +22,7 @@
 # pip install praw tqdm requests pandas
 #
 # 4. Run the script:
-# python reddit_scraper.py
+# python datasetScraper.py
 #
 # Output: gallery_dataset/<category>/<subreddit>_<index>.jpg
 # ==============================================================

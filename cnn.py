@@ -1,5 +1,3 @@
-# gallery_cleanup_app.py
-
 """
 📦 Dependencies (install before running):
 
@@ -18,9 +16,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, models, transforms
 from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
-from tkinter import Tk, filedialog, Label, Button, Canvas
-from PIL import Image, ImageTk
+from PIL import Image
 import urllib.request
 
 # --- CONFIG ---
@@ -38,7 +34,6 @@ MODEL_URL = "https://github.com/J-Moro/declutterly/releases/download/v1.0/galler
 data_transforms = {
     'train': transforms.Compose([
         transforms.Resize((IMG_SIZE, IMG_SIZE)),
-        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
@@ -75,6 +70,8 @@ optimizer = optim.Adam(model.classifier.parameters(), lr=0.001)
 def train_model():
     for epoch in range(EPOCHS):
         print(f"Epoch {epoch+1}/{EPOCHS}")
+        
+        # --- Modo treino ---
         model.train()
         running_loss = 0.0
         running_corrects = 0
@@ -94,13 +91,35 @@ def train_model():
 
         epoch_loss = running_loss / len(image_datasets['train'])
         epoch_acc = running_corrects.double() / len(image_datasets['train'])
-        print(f"Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}\n")
+
+        # --- Modo avaliação ---
+        model.eval()
+        val_loss = 0.0
+        val_corrects = 0
+
+        with torch.no_grad():
+            for inputs, labels in dataloaders['val']:
+                inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                _, preds = torch.max(outputs, 1)
+
+                val_loss += loss.item() * inputs.size(0)
+                val_corrects += torch.sum(preds == labels.data)
+
+        val_epoch_loss = val_loss / len(image_datasets['val'])
+        val_epoch_acc = val_corrects.double() / len(image_datasets['val'])
+
+        # --- Impressão dos resultados da época ---
+        print(f"Train Loss: {epoch_loss:.4f}  Train Acc: {epoch_acc:.4f}")
+        print(f"Val   Loss: {val_epoch_loss:.4f}  Val   Acc: {val_epoch_acc:.4f}\n")
 
     torch.save(model.state_dict(), "gallery_model.pth")
     print("✅ Training complete. Model saved as gallery_model.pth")
 
+
 # Uncomment to train:
-# train_model()
+#train_model()
 
 # --- INFERENCE UTIL ---
 def predict_image(image_path):
